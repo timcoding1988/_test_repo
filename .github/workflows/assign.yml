@@ -1,0 +1,22 @@
+name: Assign Command
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  assign:
+    # Only run on PR comments (not issue comments)
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/assign')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/assign-command
+        with:
+          comment-body: ${{ github.event.comment.body }}
+          pr-number: ${{ github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
