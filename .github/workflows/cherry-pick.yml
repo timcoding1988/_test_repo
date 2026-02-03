@@ -183,49 +183,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
-          # Fetch MAINTAINERS.md and extract GitHub usernames for allowed roles
-          # Uses gh api for authentication (works with private repos)
-          # Allowed roles: Core Maintainer, Community Manager, Maintainer and Community Manager, Maintainer
-          maintainers=$(gh api "repos/${REPO}/contents/MAINTAINERS.md" -q '.content' | base64 -d | \
-            grep -E '\|\s*(Core Maintainer|Community Manager|Maintainer and Community Manager|Maintainer)\s*\|' | \
-            grep -oP '\[[a-zA-Z0-9][a-zA-Z0-9-]*\]\(https://github\.com/[a-zA-Z0-9][a-zA-Z0-9-]*/?\)' | \
-            sed 's/\[\([^]]*\)\].*/\1/' | \
-            sort -u)
-
           # Fetch all comments on the PR
           comments=$(gh api "repos/${REPO}/issues/$PR_NUMBER/comments" --paginate)
 
-          # Extract cherry-pick requests from maintainer comments, deduplicate by branch
-          branches=""
-          seen_branches=""
-
-          while IFS= read -r line; do
-            user=$(echo "$line" | jq -r '.user')
-            body=$(echo "$line" | jq -r '.body')
-
-            # Check if user is a maintainer
-            if ! echo "$maintainers" | grep -qx "$user"; then
-              continue
-            fi
-
-            # Extract branch from /cherry-pick command
-            branch=$(echo "$body" | grep -oP '/cherry-pick\s+\K\S+' | head -1)
-            if [ -z "$branch" ]; then
-              continue
-            fi
-
-            # Deduplicate
-            if echo "$seen_branches" | grep -qx "$branch"; then
-              continue
-            fi
-
-            seen_branches=$(printf '%s\n%s' "$seen_branches" "$branch")
-            if [ -z "$branches" ]; then
-              branches="$branch"
-            else
-              branches="$branches,$branch"
-            fi
-          done < <(echo "$comments" | jq -c '.[] | {user: .user.login, body: .body}')
+          # Extract branches from bot's queued comments (authorization was already validated when queued)
+          branches=$(echo "$comments" | jq -r '.[] | select(.user.login == "github-actions[bot]") | .body' | \
+            grep -oP "Queued cherry-pick to \`\K[^\`]+" | sort -u | paste -sd,)
 
           echo "Found branches: $branches"
           echo "branches=$branches" >> $GITHUB_OUTPUT
