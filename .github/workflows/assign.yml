@@ -15,12 +15,13 @@ jobs:
       - name: Self-assign if unassigned
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           COMMENTER: ${{ github.event.comment.user.login }}
         run: |
           # Check if issue has any assignees
-          ASSIGNEES=$(gh issue view "$ISSUE_NUMBER" --json assignees -q '.assignees | length')
+          ASSIGNEES=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json assignees -q '.assignees | length')
 
           if [ "$ASSIGNEES" -eq 0 ]; then
-            gh issue edit "$ISSUE_NUMBER" --add-assignee "$COMMENTER"
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-assignee "$COMMENTER"
           fi
