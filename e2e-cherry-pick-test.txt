@@ -1,0 +1,2 @@
+This is an end-to-end test for the cherry-pick workflow.
+Created to verify the full flow works correctly.
