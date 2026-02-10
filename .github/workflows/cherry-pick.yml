@@ -155,12 +155,19 @@ jobs:
             echo "Cherry-pick to $TARGET_BRANCH successful"
             git push origin "$cherry_pick_branch"
 
-            # Create PR for the cherry-pick
-            gh pr create \
-              --base "$TARGET_BRANCH" \
-              --head "$cherry_pick_branch" \
-              --title "[${TARGET_BRANCH}] ${original_title}" \
-              --body "Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`."$'\n\n'"Requested by @${COMMENT_AUTHOR}"$'\n\n'"Original merge commit: ${MERGE_SHA}"
+            # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
+            pr_body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.
+
+Requested by @${COMMENT_AUTHOR}
+
+Original merge commit: ${MERGE_SHA}"
+
+            gh api repos/${REPO}/pulls \
+              --method POST \
+              -f base="$TARGET_BRANCH" \
+              -f head="$cherry_pick_branch" \
+              -f title="[${TARGET_BRANCH}] ${original_title}" \
+              -f body="$pr_body"
           else
             echo "Cherry-pick to $TARGET_BRANCH failed"
             git cherry-pick --abort || true
@@ -273,12 +280,17 @@ jobs:
               echo "Cherry-pick to $branch successful"
               git push origin "$cherry_pick_branch"
 
-              # Create PR for the cherry-pick
-              gh pr create \
-                --base "$branch" \
-                --head "$cherry_pick_branch" \
-                --title "[${branch}] ${original_title}" \
-                --body "Cherry-pick of #${PR_NUMBER} to \`${branch}\`."$'\n\n'"Original merge commit: ${MERGE_SHA}"
+              # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
+              pr_body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.
+
+Original merge commit: ${MERGE_SHA}"
+
+              gh api repos/${REPO}/pulls \
+                --method POST \
+                -f base="$branch" \
+                -f head="$cherry_pick_branch" \
+                -f title="[${branch}] ${original_title}" \
+                -f body="$pr_body"
             else
               echo "Cherry-pick to $branch failed due to conflicts"
               git cherry-pick --abort || true
