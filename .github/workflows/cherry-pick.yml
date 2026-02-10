@@ -135,12 +135,23 @@ jobs:
           git checkout "$TARGET_BRANCH"
           git pull origin "$TARGET_BRANCH"
 
+          # Verify we have commits to cherry-pick
+          if [ -z "$commits" ]; then
+            echo "No commits found for PR $PR_NUMBER"
+            exit 1
+          fi
+
           # Create a new branch for the cherry-pick PR
           cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${TARGET_BRANCH}"
+
+          # Delete existing branch if it exists (from a previous failed run)
+          git branch -D "$cherry_pick_branch" 2>/dev/null || true
+          git push origin --delete "$cherry_pick_branch" 2>/dev/null || true
+
           git checkout -b "$cherry_pick_branch"
 
           # Attempt cherry-pick of each commit
-          if echo "$commits" | xargs git cherry-pick -x; then
+          if echo "$commits" | xargs -r git cherry-pick -x; then
             echo "Cherry-pick to $TARGET_BRANCH successful"
             git push origin "$cherry_pick_branch"
 
@@ -149,11 +160,7 @@ jobs:
               --base "$TARGET_BRANCH" \
               --head "$cherry_pick_branch" \
               --title "[${TARGET_BRANCH}] ${original_title}" \
-              --body "Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.
-
-Requested by @${COMMENT_AUTHOR}
-
-Original merge commit: ${MERGE_SHA}"
+              --body "Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`."$'\n\n'"Requested by @${COMMENT_AUTHOR}"$'\n\n'"Original merge commit: ${MERGE_SHA}"
           else
             echo "Cherry-pick to $TARGET_BRANCH failed"
             git cherry-pick --abort || true
@@ -231,6 +238,12 @@ Original merge commit: ${MERGE_SHA}"
           # Get the original commits from the PR
           commits=$(gh api "repos/${REPO}/pulls/$PR_NUMBER/commits" -q '.[].sha')
 
+          # Verify we have commits to cherry-pick
+          if [ -z "$commits" ]; then
+            echo "No commits found for PR $PR_NUMBER"
+            exit 1
+          fi
+
           IFS=',' read -ra branch_array <<< "$BRANCHES"
           for branch in "${branch_array[@]}"; do
             echo "Processing cherry-pick to $branch"
@@ -248,10 +261,15 @@ Original merge commit: ${MERGE_SHA}"
 
             # Create a new branch for the cherry-pick PR
             cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${branch}"
+
+            # Delete existing branch if it exists (from a previous failed run)
+            git branch -D "$cherry_pick_branch" 2>/dev/null || true
+            git push origin --delete "$cherry_pick_branch" 2>/dev/null || true
+
             git checkout -b "$cherry_pick_branch"
 
             # Attempt cherry-pick of each commit
-            if echo "$commits" | xargs git cherry-pick -x; then
+            if echo "$commits" | xargs -r git cherry-pick -x; then
               echo "Cherry-pick to $branch successful"
               git push origin "$cherry_pick_branch"
 
@@ -260,9 +278,7 @@ Original merge commit: ${MERGE_SHA}"
                 --base "$branch" \
                 --head "$cherry_pick_branch" \
                 --title "[${branch}] ${original_title}" \
-                --body "Cherry-pick of #${PR_NUMBER} to \`${branch}\`.
-
-Original merge commit: ${MERGE_SHA}"
+                --body "Cherry-pick of #${PR_NUMBER} to \`${branch}\`."$'\n\n'"Original merge commit: ${MERGE_SHA}"
             else
               echo "Cherry-pick to $branch failed due to conflicts"
               git cherry-pick --abort || true
