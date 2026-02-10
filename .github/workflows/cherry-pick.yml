@@ -156,18 +156,12 @@ jobs:
             git push origin "$cherry_pick_branch"
 
             # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
-            pr_body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.
-
-Requested by @${COMMENT_AUTHOR}
-
-Original merge commit: ${MERGE_SHA}"
-
             gh api repos/${REPO}/pulls \
               --method POST \
               -f base="$TARGET_BRANCH" \
               -f head="$cherry_pick_branch" \
               -f title="[${TARGET_BRANCH}] ${original_title}" \
-              -f body="$pr_body"
+              -f body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.\n\nRequested by @${COMMENT_AUTHOR}\n\nOriginal merge commit: ${MERGE_SHA}"
           else
             echo "Cherry-pick to $TARGET_BRANCH failed"
             git cherry-pick --abort || true
@@ -281,16 +275,12 @@ Original merge commit: ${MERGE_SHA}"
               git push origin "$cherry_pick_branch"
 
               # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
-              pr_body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.
-
-Original merge commit: ${MERGE_SHA}"
-
               gh api repos/${REPO}/pulls \
                 --method POST \
                 -f base="$branch" \
                 -f head="$cherry_pick_branch" \
                 -f title="[${branch}] ${original_title}" \
-                -f body="$pr_body"
+                -f body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.\n\nOriginal merge commit: ${MERGE_SHA}"
             else
               echo "Cherry-pick to $branch failed due to conflicts"
               git cherry-pick --abort || true
