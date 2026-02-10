@@ -31,5 +31,8 @@ jobs:
               exit 1
             fi
           else
-            echo "Issue #${ISSUE_NUMBER} already has assignees, skipping"
+            # Get current assignee(s) and notify the commenter
+            CURRENT_ASSIGNEES=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json assignees -q '.assignees[].login' | tr '\n' ', ' | sed 's/,$//')
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "@${COMMENTER} This issue has already been assigned to @${CURRENT_ASSIGNEES}."
+            echo "Notified @${COMMENTER} that issue #${ISSUE_NUMBER} is already assigned to ${CURRENT_ASSIGNEES}"
           fi
