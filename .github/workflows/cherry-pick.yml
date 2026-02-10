@@ -154,19 +154,34 @@ jobs:
           if echo "$commits" | xargs -r git cherry-pick -x; then
             echo "Cherry-pick to $TARGET_BRANCH successful"
             git push origin "$cherry_pick_branch"
-
-            # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
-            gh api repos/${REPO}/pulls \
-              --method POST \
-              -f base="$TARGET_BRANCH" \
-              -f head="$cherry_pick_branch" \
-              -f title="[${TARGET_BRANCH}] ${original_title}" \
-              -f body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.\n\nRequested by @${COMMENT_AUTHOR}\n\nOriginal merge commit: ${MERGE_SHA}"
+            echo "cherry_pick_branch=$cherry_pick_branch" >> $GITHUB_OUTPUT
+            echo "original_title=$original_title" >> $GITHUB_OUTPUT
+            echo "success=true" >> $GITHUB_OUTPUT
           else
             echo "Cherry-pick to $TARGET_BRANCH failed"
             git cherry-pick --abort || true
             exit 1
           fi
+
+      - name: Create cherry-pick PR
+        if: steps.auth.outputs.authorized == 'true' && steps.parse.outputs.branch != '' && steps.pr.outputs.pr_state == 'merged'
+        env:
+          GH_TOKEN: ${{ secrets.CHERRY_PICK_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
+          TARGET_BRANCH: ${{ steps.parse.outputs.branch }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${TARGET_BRANCH}"
+          original_title=$(gh api "repos/${REPO}/pulls/$PR_NUMBER" -q '.title')
+
+          gh api repos/${REPO}/pulls \
+            --method POST \
+            -f base="$TARGET_BRANCH" \
+            -f head="$cherry_pick_branch" \
+            -f title="[${TARGET_BRANCH}] ${original_title}" \
+            -f body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.\n\nRequested by @${COMMENT_AUTHOR}\n\nOriginal merge commit: ${MERGE_SHA}"
 
       - name: Clear git credentials
         if: always()
@@ -225,11 +240,11 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
       - name: Process cherry-picks
+        id: cherry-pick
         if: steps.find-requests.outputs.has_requests == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BRANCHES: ${{ steps.find-requests.outputs.branches }}
           REPO: ${{ github.repository }}
         run: |
@@ -245,6 +260,7 @@ jobs:
             exit 1
           fi
 
+          successful_branches=""
           IFS=',' read -ra branch_array <<< "$BRANCHES"
           for branch in "${branch_array[@]}"; do
             echo "Processing cherry-pick to $branch"
@@ -273,14 +289,7 @@ jobs:
             if echo "$commits" | xargs -r git cherry-pick -x; then
               echo "Cherry-pick to $branch successful"
               git push origin "$cherry_pick_branch"
-
-              # Create PR for the cherry-pick using REST API (GraphQL has stricter permission enforcement)
-              gh api repos/${REPO}/pulls \
-                --method POST \
-                -f base="$branch" \
-                -f head="$cherry_pick_branch" \
-                -f title="[${branch}] ${original_title}" \
-                -f body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.\n\nOriginal merge commit: ${MERGE_SHA}"
+              successful_branches="${successful_branches}${branch},"
             else
               echo "Cherry-pick to $branch failed due to conflicts"
               git cherry-pick --abort || true
@@ -288,6 +297,32 @@ jobs:
               git checkout main
               git branch -D "$cherry_pick_branch" || true
             fi
+          done
+
+          echo "successful_branches=${successful_branches%,}" >> $GITHUB_OUTPUT
+          echo "original_title=$original_title" >> $GITHUB_OUTPUT
+
+      - name: Create cherry-pick PRs
+        if: steps.find-requests.outputs.has_requests == 'true' && steps.cherry-pick.outputs.successful_branches != ''
+        env:
+          GH_TOKEN: ${{ secrets.CHERRY_PICK_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          BRANCHES: ${{ steps.cherry-pick.outputs.successful_branches }}
+          ORIGINAL_TITLE: ${{ steps.cherry-pick.outputs.original_title }}
+          REPO: ${{ github.repository }}
+        run: |
+          IFS=',' read -ra branch_array <<< "$BRANCHES"
+          for branch in "${branch_array[@]}"; do
+            cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${branch}"
+            echo "Creating PR for $cherry_pick_branch"
+
+            gh api repos/${REPO}/pulls \
+              --method POST \
+              -f base="$branch" \
+              -f head="$cherry_pick_branch" \
+              -f title="[${branch}] ${ORIGINAL_TITLE}" \
+              -f body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.\n\nOriginal merge commit: ${MERGE_SHA}"
           done
 
       - name: Clear git credentials
