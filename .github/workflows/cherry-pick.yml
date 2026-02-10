@@ -37,7 +37,7 @@ jobs:
             echo "pr_state=open" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check maintainer authorization
+      - name: Check user authorization
         id: auth
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,24 +46,14 @@ jobs:
           PR_STATE: ${{ steps.pr.outputs.pr_state }}
           REPO: ${{ github.repository }}
         run: |
-          # Fetch MAINTAINERS.md and extract GitHub usernames for allowed roles
-          # Uses gh api for authentication (works with private repos)
-          # Allowed roles: Core Maintainer, Community Manager, Maintainer and Community Manager, Maintainer
-          maintainers=$(gh api "repos/${REPO}/contents/MAINTAINERS.md" -q '.content' | base64 -d | \
-            grep -E '\|\s*(Core Maintainer|Community Manager|Maintainer and Community Manager|Maintainer)\s*\|' | \
-            grep -oP '\[[a-zA-Z0-9][a-zA-Z0-9-]*\]\(https://github\.com/[a-zA-Z0-9][a-zA-Z0-9-]*/?\)' | \
-            sed 's/\[\([^]]*\)\].*/\1/' | \
-            sort -u)
+          # Check if user has write permission to the repository
+          permission=$(gh api "repos/${REPO}/collaborators/${COMMENT_AUTHOR}/permission" -q '.permission' 2>/dev/null || echo "none")
 
-          if echo "$maintainers" | grep -qx "$COMMENT_AUTHOR"; then
-            echo "User $COMMENT_AUTHOR is authorized"
+          if [ "$permission" == "admin" ] || [ "$permission" == "write" ]; then
+            echo "User $COMMENT_AUTHOR has $permission permission, authorized"
             echo "authorized=true" >> $GITHUB_OUTPUT
           else
-            echo "User $COMMENT_AUTHOR is not a maintainer"
-            # Only post error comment for merged PRs; silently ignore for open PRs
-            if [ "$PR_STATE" == "merged" ]; then
-              gh pr comment "$PR_NUMBER" --body "Sorry, only maintainers can use the \`/cherry-pick\` command."
-            fi
+            echo "User $COMMENT_AUTHOR has $permission permission, not authorized"
             echo "authorized=false" >> $GITHUB_OUTPUT
           fi
 
@@ -86,7 +76,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.auth.outputs.authorized == 'true' && steps.parse.outputs.branch != ''
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -112,7 +102,6 @@ jobs:
           # Check if branch exists
           if ! git ls-remote --exit-code origin "$TARGET_BRANCH" > /dev/null 2>&1; then
             echo "Branch $TARGET_BRANCH does not exist"
-            gh pr comment "$PR_NUMBER" --body "Cherry-pick cannot be queued: branch \`$TARGET_BRANCH\` does not exist."
             exit 1
           fi
 
@@ -126,39 +115,48 @@ jobs:
           MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
           TARGET_BRANCH: ${{ steps.parse.outputs.branch }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          REPO: ${{ github.repository }}
         run: |
           echo "Processing cherry-pick to $TARGET_BRANCH"
 
           # Check if branch exists
           if ! git ls-remote --exit-code origin "$TARGET_BRANCH" > /dev/null 2>&1; then
             echo "Branch $TARGET_BRANCH does not exist"
-            gh pr comment "$PR_NUMBER" --body "@$COMMENT_AUTHOR Cherry-pick failed: branch \`$TARGET_BRANCH\` does not exist."
             exit 1
           fi
+
+          # Get original PR title for the cherry-pick PR
+          original_title=$(gh api "repos/${REPO}/pulls/$PR_NUMBER" -q '.title')
+
+          # Get the original commits from the PR
+          commits=$(gh api "repos/${REPO}/pulls/$PR_NUMBER/commits" -q '.[].sha')
 
           # Checkout target branch
           git checkout "$TARGET_BRANCH"
           git pull origin "$TARGET_BRANCH"
 
-          # Attempt cherry-pick
-          if git cherry-pick "$MERGE_SHA" --mainline 1; then
+          # Create a new branch for the cherry-pick PR
+          cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${TARGET_BRANCH}"
+          git checkout -b "$cherry_pick_branch"
+
+          # Attempt cherry-pick of each commit
+          if echo "$commits" | xargs git cherry-pick -x; then
             echo "Cherry-pick to $TARGET_BRANCH successful"
-            git push origin "$TARGET_BRANCH"
-            gh pr comment "$PR_NUMBER" --body "@$COMMENT_AUTHOR Cherry-pick succeeded! Changes have been applied to \`$TARGET_BRANCH\`."
+            git push origin "$cherry_pick_branch"
+
+            # Create PR for the cherry-pick
+            gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "$cherry_pick_branch" \
+              --title "[${TARGET_BRANCH}] ${original_title}" \
+              --body "Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.
+
+Requested by @${COMMENT_AUTHOR}
+
+Original merge commit: ${MERGE_SHA}"
           else
             echo "Cherry-pick to $TARGET_BRANCH failed"
             git cherry-pick --abort || true
-
-            gh pr comment "$PR_NUMBER" --body "@$COMMENT_AUTHOR Cherry-pick to \`$TARGET_BRANCH\` failed due to conflicts.
-
-          Please cherry-pick manually:
-          \`\`\`bash
-          git fetch origin
-          git checkout $TARGET_BRANCH
-          git cherry-pick $MERGE_SHA -m 1
-          # resolve conflicts
-          git push origin $TARGET_BRANCH
-          \`\`\`"
             exit 1
           fi
 
@@ -202,7 +200,7 @@ jobs:
 
       - name: Checkout repository
         if: steps.find-requests.outputs.has_requests == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -225,9 +223,13 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           BRANCHES: ${{ steps.find-requests.outputs.branches }}
+          REPO: ${{ github.repository }}
         run: |
-          results=""
-          failed_branches=""
+          # Get original PR title for cherry-pick PRs
+          original_title=$(gh api "repos/${REPO}/pulls/$PR_NUMBER" -q '.title')
+
+          # Get the original commits from the PR
+          commits=$(gh api "repos/${REPO}/pulls/$PR_NUMBER/commits" -q '.[].sha')
 
           IFS=',' read -ra branch_array <<< "$BRANCHES"
           for branch in "${branch_array[@]}"; do
@@ -235,10 +237,7 @@ jobs:
 
             # Check if branch exists
             if ! git ls-remote --exit-code origin "$branch" > /dev/null 2>&1; then
-              echo "Branch $branch does not exist"
-              results="$results
-          - \`$branch\`: ✗ Failed (branch does not exist)"
-              failed_branches="$failed_branches $branch"
+              echo "Branch $branch does not exist, skipping"
               continue
             fi
 
@@ -247,40 +246,31 @@ jobs:
             git checkout "$branch"
             git pull origin "$branch"
 
-            # Attempt cherry-pick
-            if git cherry-pick "$MERGE_SHA" --mainline 1; then
+            # Create a new branch for the cherry-pick PR
+            cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${branch}"
+            git checkout -b "$cherry_pick_branch"
+
+            # Attempt cherry-pick of each commit
+            if echo "$commits" | xargs git cherry-pick -x; then
               echo "Cherry-pick to $branch successful"
-              git push origin "$branch"
-              results="$results
-          - \`$branch\`: ✓ Success"
+              git push origin "$cherry_pick_branch"
+
+              # Create PR for the cherry-pick
+              gh pr create \
+                --base "$branch" \
+                --head "$cherry_pick_branch" \
+                --title "[${branch}] ${original_title}" \
+                --body "Cherry-pick of #${PR_NUMBER} to \`${branch}\`.
+
+Original merge commit: ${MERGE_SHA}"
             else
-              echo "Cherry-pick to $branch failed"
+              echo "Cherry-pick to $branch failed due to conflicts"
               git cherry-pick --abort || true
-              results="$results
-          - \`$branch\`: ✗ Failed (conflicts)"
-              failed_branches="$failed_branches $branch"
+              # Clean up the failed branch
+              git checkout main
+              git branch -D "$cherry_pick_branch" || true
             fi
           done
-
-          # Build summary comment
-          comment="Cherry-pick results:
-          $results"
-
-          # Add manual instructions for failed branches
-          if [ -n "$failed_branches" ]; then
-            comment="$comment
-
-          To manually cherry-pick failed branches:
-          \`\`\`bash
-          git fetch origin
-          git checkout <branch>
-          git cherry-pick $MERGE_SHA -m 1
-          # resolve conflicts
-          git push origin <branch>
-          \`\`\`"
-          fi
-
-          gh pr comment "$PR_NUMBER" --body "$comment"
 
       - name: Clear git credentials
         if: always()

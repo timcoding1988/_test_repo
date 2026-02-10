@@ -23,5 +23,5 @@ jobs:
           ASSIGNEES=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json assignees -q '.assignees | length')
 
           if [ "$ASSIGNEES" -eq 0 ]; then
-            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-assignee "$COMMENTER"
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-assignee "$COMMENTER" || true
           fi
