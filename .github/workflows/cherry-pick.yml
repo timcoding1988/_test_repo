@@ -176,12 +176,15 @@ jobs:
           cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${TARGET_BRANCH}"
           original_title=$(gh api "repos/${REPO}/pulls/$PR_NUMBER" -q '.title')
 
+          printf -v body 'Cherry-pick of #%s to `%s`.\n\nRequested by @%s\n\nOriginal merge commit: %s' \
+            "$PR_NUMBER" "$TARGET_BRANCH" "$COMMENT_AUTHOR" "$MERGE_SHA"
+
           gh api repos/${REPO}/pulls \
             --method POST \
             -f base="$TARGET_BRANCH" \
             -f head="$cherry_pick_branch" \
             -f title="[${TARGET_BRANCH}] ${original_title}" \
-            -f body="Cherry-pick of #${PR_NUMBER} to \`${TARGET_BRANCH}\`.\n\nRequested by @${COMMENT_AUTHOR}\n\nOriginal merge commit: ${MERGE_SHA}"
+            -f body="$body"
 
       - name: Clear git credentials
         if: always()
@@ -317,12 +320,15 @@ jobs:
             cherry_pick_branch="cherry-pick-${PR_NUMBER}-to-${branch}"
             echo "Creating PR for $cherry_pick_branch"
 
+            printf -v body 'Cherry-pick of #%s to `%s`.\n\nOriginal merge commit: %s' \
+              "$PR_NUMBER" "$branch" "$MERGE_SHA"
+
             gh api repos/${REPO}/pulls \
               --method POST \
               -f base="$branch" \
               -f head="$cherry_pick_branch" \
               -f title="[${branch}] ${ORIGINAL_TITLE}" \
-              -f body="Cherry-pick of #${PR_NUMBER} to \`${branch}\`.\n\nOriginal merge commit: ${MERGE_SHA}"
+              -f body="$body"
           done
 
       - name: Clear git credentials
