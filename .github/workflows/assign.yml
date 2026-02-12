@@ -31,8 +31,11 @@ jobs:
               exit 1
             fi
           else
-            # Get current assignee(s) and notify the commenter
-            CURRENT_ASSIGNEES=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json assignees -q '.assignees[].login' | tr '\n' ', ' | sed 's/,$//')
-            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "@${COMMENTER} This issue has already been assigned to @${CURRENT_ASSIGNEES}."
-            echo "Notified @${COMMENTER} that issue #${ISSUE_NUMBER} is already assigned to ${CURRENT_ASSIGNEES}"
+            # Add commenter as an additional assignee
+            if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/assignees" -X POST -f "assignees[]=${COMMENTER}" --silent; then
+              echo "Successfully added @${COMMENTER} as an additional assignee to issue #${ISSUE_NUMBER}"
+            else
+              echo "Failed to add @${COMMENTER} as an additional assignee to issue #${ISSUE_NUMBER}"
+              exit 1
+            fi
           fi
